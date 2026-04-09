@@ -6,17 +6,15 @@ pub enum Token {
     DEC,
     OUTPUT,
     INPUT,
-    JMPIN(i64),
-    JMPOUT(i64),
+    JMPIN,
+    JMPOUT,
     COMMENT,
 }
 
-pub struct Lexer {
-    pub depth: i64,
-}
+pub struct Lexer {}
 
 impl Lexer {
-    pub fn run(&mut self, code: &String) -> Vec<Token> {
+    pub fn run(code: &String) -> Vec<Token> {
         let stream = code.chars();
         stream
             .map(|ch| match ch {
@@ -26,21 +24,11 @@ impl Lexer {
                 '-' => Token::DEC,
                 '.' => Token::OUTPUT,
                 ',' => Token::INPUT,
-                '[' => {
-                    self.depth += 1;
-                    Token::JMPIN(self.depth - 1)
-                }
-                ']' => {
-                    self.depth -= 1;
-                    Token::JMPOUT(self.depth + 1)
-                }
+                '[' => Token::JMPIN,
+                ']' => Token::JMPOUT,
                 _ => Token::COMMENT,
             })
             .filter(|tk| !matches!(tk, &Token::COMMENT))
             .collect()
-    }
-
-    pub fn reset(&mut self) {
-        self.depth = 0i64;
     }
 }
