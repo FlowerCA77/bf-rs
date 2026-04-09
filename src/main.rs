@@ -2,6 +2,11 @@ use std::dbg;
 
 use bf_rs::{Lexer, Parser, Ir1Program};
 
+/*
+ * ====== THIS IS NOT THE ENTRY POINT FOR NOW! ======
+ * ====== THE BINARY ENTRY IS NOT YET STARTED NOW! ======
+ * ====== THIS CODE IS JUST FOR QUICK DEBUG! ======
+ */
 fn main() {
     let bfcode = ">>+<<-.";
 
