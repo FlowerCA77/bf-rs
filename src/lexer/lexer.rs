@@ -32,3 +32,7 @@ impl Lexer {
             .collect()
     }
 }
+
+#[cfg(test)]
+#[path = "test_lexer.rs"]
+mod tests;

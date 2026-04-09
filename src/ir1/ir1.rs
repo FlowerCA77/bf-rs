@@ -116,3 +116,7 @@ impl Ir1Program {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "test_ir1.rs"]
+mod tests;

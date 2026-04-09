@@ -1,6 +1,6 @@
 use std::dbg;
 
-use bf_rs::{Lexer, Parser, Ir1Program};
+use bf_rs::{Ir1Program, Lexer, Parser};
 
 /*
  * ====== THIS IS NOT THE ENTRY POINT FOR NOW! ======
@@ -16,7 +16,11 @@ fn main() {
 
     let ir1 = Ir1Program::lower(&ast);
     match ir1 {
-        Ok(ir1ok) => {dbg!(ir1ok);}
-        Err(_) => {println!("Ir1 failed");}
+        Ok(ir1ok) => {
+            dbg!(ir1ok);
+        }
+        Err(_) => {
+            println!("Ir1 failed");
+        }
     }
 }

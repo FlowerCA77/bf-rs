@@ -35,3 +35,7 @@ impl<T: fmt::Display> fmt::Display for List<T> {
 
 pub use List::Cons;
 pub use List::Nil;
+
+#[cfg(test)]
+#[path = "test_linked_list.rs"]
+mod tests;

@@ -71,3 +71,7 @@ impl Parser {
         Ok(accer.reverse())
     }
 }
+
+#[cfg(test)]
+#[path = "test_parser.rs"]
+mod tests;
