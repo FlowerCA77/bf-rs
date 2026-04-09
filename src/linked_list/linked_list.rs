@@ -1,5 +1,4 @@
-use std::fmt;
-use std::rc::Rc;
+use std::{fmt, rc::Rc};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum List<T> {

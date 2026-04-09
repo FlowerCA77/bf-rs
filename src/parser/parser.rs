@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
-use crate::lexer::lexer::Token;
-use crate::linked_list::linked_list::List;
-use crate::linked_list::linked_list::Nil;
+use crate::{
+    lexer::lexer::Token,
+    linked_list::linked_list::{List, Nil},
+};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum AstNode {

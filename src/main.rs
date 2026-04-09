@@ -1,19 +1,17 @@
 use std::dbg;
 
-use bf_rs::Lexer;
-use bf_rs::Parser;
+use bf_rs::{Lexer, Parser, Ir1Program};
 
 fn main() {
-    let bf_code = ">>[-]<<[->>+<<]";
-    let tkstream = Lexer::run(&bf_code.to_string());
+    let bfcode = ">>+<<-.";
 
-    match Parser::parse(&tkstream) {
-        Ok(ast) => {
-            println!("Parse successful!");
-            dbg!(ast);
-        }
-        Err(err) => {
-            eprintln!("Parse error: {}", err);
-        }
+    let tkstream = Lexer::run(&bfcode.to_string());
+
+    let ast = Parser::parse(&tkstream).unwrap();
+
+    let ir1 = Ir1Program::lower(&ast);
+    match ir1 {
+        Ok(ir1ok) => {dbg!(ir1ok);}
+        Err(_) => {println!("Ir1 failed");}
     }
 }
