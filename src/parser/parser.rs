@@ -1,9 +1,6 @@
 use std::rc::Rc;
 
-use crate::{
-    lexer::lexer::Token,
-    linked_list::linked_list::{List, Nil},
-};
+use crate::{List, Nil, ParseError, Token};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum AstNode {
@@ -16,18 +13,18 @@ pub type Ast = List<AstNode>;
 pub struct Parser {}
 
 impl Parser {
-    pub fn parse(tkstream: &[Token]) -> Result<Ast, String> {
+    pub fn parse(tkstream: &[Token]) -> Result<Ast, ParseError> {
         let mut pos = 0usize;
         let ast = Self::parse_block(&mut pos, tkstream)?;
 
         if pos < tkstream.len() {
-            return Err(format!("Unexpected ']' at position {}", pos));
+            return Err(ParseError::UnexpectedRightBracket { pos });
         }
 
         Ok(ast)
     }
 
-    fn parse_block(pos: &mut usize, tokens: &[Token]) -> Result<Ast, String> {
+    fn parse_block(pos: &mut usize, tokens: &[Token]) -> Result<Ast, ParseError> {
         let mut accer = Rc::new(Nil);
 
         while *pos < tokens.len() {
@@ -38,9 +35,7 @@ impl Parser {
                     let inner_list = Self::parse_block(pos, tokens)?;
 
                     if *pos >= tokens.len() || tokens[*pos] != Token::JMPOUT {
-                        return Err(format!(
-                            "Unclosed '['. Reached EOF before finding matching ']'"
-                        ));
+                        return Err(ParseError::UnclosedLeftBracket);
                     }
                     *pos += 1;
 

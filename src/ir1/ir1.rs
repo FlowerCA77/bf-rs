@@ -1,13 +1,10 @@
 use crate::{
+    Ast,
+    AstNode,
     List::{self, Cons, Nil},
+    LowerError,
     Token,
-    parser::parser::{Ast, AstNode},
 };
-
-pub enum LowerError {
-    UnexpectedBracketInRun,
-    Overflow,
-}
 
 #[derive(Debug)]
 pub struct Ir1Program {
@@ -75,7 +72,7 @@ impl Ir1Program {
                 Token::JMPIN | Token::JMPOUT => {
                     return Err(LowerError::UnexpectedBracketInRun);
                 }
-                _ => (),
+                Token::COMMENT => (),
             };
         }
 
@@ -85,9 +82,9 @@ impl Ir1Program {
         Ok(())
     }
 
-    fn lower_block(astNodes: &List<AstNode>) -> Result<Ir1Block, LowerError> {
+    fn lower_block(ast_nodes: &List<AstNode>) -> Result<Ir1Block, LowerError> {
         let mut out_block = Ir1Block::new();
-        let mut cursor = astNodes;
+        let mut cursor = ast_nodes;
         loop {
             match cursor {
                 Cons(node, next) => {

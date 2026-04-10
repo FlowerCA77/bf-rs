@@ -1,6 +1,6 @@
-use std::dbg;
-
-use bf_rs::{Ir1Program, Lexer, Parser};
+use bf_rs::{
+    bferror::bferror::LowerError, ir1::ir1::Ir1Program, lexer::lexer::Lexer, parser::parser::Parser,
+};
 
 /*
  * ====== THIS IS NOT THE ENTRY POINT FOR NOW! ======
@@ -10,17 +10,22 @@ use bf_rs::{Ir1Program, Lexer, Parser};
 fn main() {
     let bfcode = ">>+<<-.";
 
-    let tkstream = Lexer::run(&bfcode.to_string());
-
-    let ast = Parser::parse(&tkstream).unwrap();
-
-    let ir1 = Ir1Program::lower(&ast);
-    match ir1 {
+    match compile_to_ir1(bfcode) {
         Ok(ir1ok) => {
             dbg!(ir1ok);
         }
-        Err(_) => {
-            println!("Ir1 failed");
+        Err(err) => {
+            eprintln!("{}", err);
         }
     }
+}
+
+fn compile_to_ir1(bfcode: &str) -> Result<Ir1Program, LowerError> {
+    let tkstream = Lexer::run(&bfcode.to_string());
+    let ast_res = Parser::parse(&tkstream);
+    let ir1 = match ast_res {
+        Ok(ast) => Ir1Program::lower(&ast),
+        Err(_) => Err(LowerError::UnexpectedBracketInRun),
+    };
+    ir1
 }
