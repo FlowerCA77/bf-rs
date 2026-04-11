@@ -1,5 +1,5 @@
 use super::*;
-use crate::{AstNode, Ir1Error, Lexer, List, Parser, Token};
+use crate::{AstNode, Ir1Error, Lexer, List, LogLevel, Logger, Parser, Token};
 use std::rc::Rc;
 
 fn lower_from_code(code: &str) -> Ir1Program {
@@ -92,4 +92,13 @@ fn bf1_roundtrip_raw_string() {
     let text = ir.to_bf1_string();
     let reparsed = Ir1Program::from_bf1_str(&text).unwrap();
     assert_eq!(reparsed, ir);
+}
+
+#[test]
+fn lower_with_logger_keeps_result() {
+    let logger = Logger::new(LogLevel::Debug);
+    let tokens = Lexer::run_with_logger("[-]", Some(&logger));
+    let ast = Parser::parse_with_logger(&tokens, Some(&logger)).unwrap();
+    let ir = Ir1Program::lower_with_logger(&ast, Some(&logger)).unwrap();
+    assert_eq!(ir.root, vec![Ir1Inst::Loop(vec![Ir1Inst::CellAdd(-1)])]);
 }

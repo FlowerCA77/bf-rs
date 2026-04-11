@@ -1,0 +1,9 @@
+INFO        | DRIVER   | I7852  | I_PIPELINE_START                     | start staged pipeline with file IO and diagnostics
+INFO        | DRIVER   | I4090  | I_VALID_INPUT                        | valid raw BF chars=220
+INFO        | IR1      | I9040  | I_IR1_FILE_WRITTEN                   | artifacts/pipeline_valid.bf1
+INFO        | IR2      | I9767  | I_IR2_FILE_WRITTEN                   | artifacts/pipeline_valid.bf2
+INFO        | BFVM     | I9105  | I_VM_RUN_OK                          | valid IR2 file executed successfully
+INFO        | DRIVER   | I9743  | I_VALID_PIPELINE_OK                  | valid BF pipeline completed
+INFO        | DRIVER   | I6199  | I_INVALID_INPUT                      | invalid raw BF chars=89
+WARNING     | PARSER   | W1869  | W_EXPECTED_PARSE_ERROR_MISSING       | invalid BF input unexpectedly parsed successfully
+INFO        | DRIVER   | I8649  | I_LOG_WRITE                          | writing log file to artifacts/pipeline.log

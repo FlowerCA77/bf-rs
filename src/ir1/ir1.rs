@@ -1,8 +1,9 @@
 use std::fs;
 use std::path::Path;
+use std::str::SplitWhitespace;
 
 use crate::{
-    Ast, AstNode, Ir1Error,
+    Ast, AstNode, Ir1Error, LogLevel, Logger,
     List::{self, Cons, Nil},
     Token,
 };
@@ -38,9 +39,22 @@ impl Ir1Program {
         }
     }
 
-    fn lower_run(tkstream: &[Token], out_block: &mut Ir1Block) -> Result<(), Ir1Error> {
+    fn lower_run(
+        tkstream: &[Token],
+        out_block: &mut Ir1Block,
+        logger: Option<&Logger>,
+    ) -> Result<(), Ir1Error> {
         let mut ptr_delta = 0;
         let mut cell_delta = 0;
+
+        if let Some(logger) = logger {
+            logger.emit_raw(
+                LogLevel::Debug,
+                "IR1",
+                "D_IR1_LOWER_RUN_START",
+                &format!("tokens={}", tkstream.len()),
+            );
+        }
 
         for tk in tkstream {
             match tk {
@@ -80,10 +94,19 @@ impl Ir1Program {
         Ir1Program::flush_ptr(&mut ptr_delta, out_block);
         Ir1Program::flush_cell(&mut cell_delta, out_block);
 
+        if let Some(logger) = logger {
+            logger.emit_raw(
+                LogLevel::Debug,
+                "IR1",
+                "D_IR1_LOWER_RUN_DONE",
+                &format!("out_block_len={}", out_block.len()),
+            );
+        }
+
         Ok(())
     }
 
-    fn lower_block(ast_nodes: &List<AstNode>) -> Result<Ir1Block, Ir1Error> {
+    fn lower_block(ast_nodes: &List<AstNode>, logger: Option<&Logger>) -> Result<Ir1Block, Ir1Error> {
         let mut out_block = Ir1Block::new();
         let mut cursor = ast_nodes;
         loop {
@@ -91,11 +114,27 @@ impl Ir1Program {
                 Cons(node, next) => {
                     match node {
                         AstNode::Run(tkstream) => {
-                            Ir1Program::lower_run(tkstream, &mut out_block)?;
+                            Ir1Program::lower_run(tkstream, &mut out_block, logger)?;
                         }
                         AstNode::Loop(inner_ast) => {
-                            let inner_block = Ir1Program::lower_block(&inner_ast);
-                            out_block.push(Ir1Inst::Loop(inner_block?));
+                            if let Some(logger) = logger {
+                                logger.emit_raw(
+                                    LogLevel::Verbose,
+                                    "IR1",
+                                    "V_IR1_LOWER_LOOP_BEGIN",
+                                    &format!("current_block_len={}", out_block.len()),
+                                );
+                            }
+                            let inner_block = Ir1Program::lower_block(&inner_ast, logger)?;
+                            out_block.push(Ir1Inst::Loop(inner_block));
+                            if let Some(logger) = logger {
+                                logger.emit_raw(
+                                    LogLevel::Verbose,
+                                    "IR1",
+                                    "V_IR1_LOWER_LOOP_END",
+                                    &format!("current_block_len={}", out_block.len()),
+                                );
+                            }
                         }
                     };
                     cursor = next;
@@ -109,8 +148,35 @@ impl Ir1Program {
     }
 
     pub fn lower(ast: &Ast) -> Result<Ir1Program, Ir1Error> {
+        Self::lower_with_logger(ast, None)
+    }
+
+    pub fn lower_with_logger(ast: &Ast, logger: Option<&Logger>) -> Result<Ir1Program, Ir1Error> {
+        if let Some(logger) = logger {
+            logger.emit_raw(LogLevel::Info, "IR1", "I_IR1_LOWER_START", "begin lowering AST to IR1");
+        }
+
+        let root = match Ir1Program::lower_block(ast, logger) {
+            Ok(root) => root,
+            Err(err) => {
+                if let Some(logger) = logger {
+                    logger.emit_error(&err);
+                }
+                return Err(err);
+            }
+        };
+
+        if let Some(logger) = logger {
+            logger.emit_raw(
+                LogLevel::Info,
+                "IR1",
+                "I_IR1_LOWER_DONE",
+                &format!("root_insts={}", root.len()),
+            );
+        }
+
         Ok(Ir1Program {
-            root: Ir1Program::lower_block(ast)?,
+            root,
         })
     }
 
@@ -238,72 +304,67 @@ impl Ir1Program {
         let mut parts = line.split_whitespace();
         let op = parts
             .next()
-            .ok_or_else(|| Ir1Error::ParseInvalidInstruction {
-                line: line_no,
-                content: line.to_string(),
-            })?;
+            .ok_or_else(|| Self::invalid_instruction_err(line_no, line))?;
 
         match op {
-            "PTR" => {
-                let val = parts.next().ok_or_else(|| Ir1Error::ParseInvalidOperand {
-                    line: line_no,
-                    content: line.to_string(),
-                })?;
-                if parts.next().is_some() {
-                    return Err(Ir1Error::ParseInvalidOperand {
-                        line: line_no,
-                        content: line.to_string(),
-                    });
-                }
-                let parsed = val
-                    .parse::<i64>()
-                    .map_err(|_| Ir1Error::ParseInvalidOperand {
-                        line: line_no,
-                        content: line.to_string(),
-                    })?;
-                Ok(Ir1Inst::PtrMove(parsed))
-            }
-            "CELL" => {
-                let val = parts.next().ok_or_else(|| Ir1Error::ParseInvalidOperand {
-                    line: line_no,
-                    content: line.to_string(),
-                })?;
-                if parts.next().is_some() {
-                    return Err(Ir1Error::ParseInvalidOperand {
-                        line: line_no,
-                        content: line.to_string(),
-                    });
-                }
-                let parsed = val
-                    .parse::<i64>()
-                    .map_err(|_| Ir1Error::ParseInvalidOperand {
-                        line: line_no,
-                        content: line.to_string(),
-                    })?;
-                Ok(Ir1Inst::CellAdd(parsed))
-            }
+            "PTR" => Ok(Ir1Inst::PtrMove(Self::parse_single_i64_operand(
+                line_no,
+                line,
+                &mut parts,
+            )?)),
+            "CELL" => Ok(Ir1Inst::CellAdd(Self::parse_single_i64_operand(
+                line_no,
+                line,
+                &mut parts,
+            )?)),
             "IN" => {
-                if parts.next().is_some() {
-                    return Err(Ir1Error::ParseInvalidOperand {
-                        line: line_no,
-                        content: line.to_string(),
-                    });
-                }
+                Self::ensure_no_extra_operand(line_no, line, &mut parts)?;
                 Ok(Ir1Inst::Input)
             }
             "OUT" => {
-                if parts.next().is_some() {
-                    return Err(Ir1Error::ParseInvalidOperand {
-                        line: line_no,
-                        content: line.to_string(),
-                    });
-                }
+                Self::ensure_no_extra_operand(line_no, line, &mut parts)?;
                 Ok(Ir1Inst::Output)
             }
-            _ => Err(Ir1Error::ParseInvalidInstruction {
-                line: line_no,
-                content: line.to_string(),
-            }),
+            _ => Err(Self::invalid_instruction_err(line_no, line)),
+        }
+    }
+
+    fn parse_single_i64_operand(
+        line_no: usize,
+        line: &str,
+        parts: &mut SplitWhitespace<'_>,
+    ) -> Result<i64, Ir1Error> {
+        let val = parts
+            .next()
+            .ok_or_else(|| Self::invalid_operand_err(line_no, line))?;
+        Self::ensure_no_extra_operand(line_no, line, parts)?;
+
+        val.parse::<i64>()
+            .map_err(|_| Self::invalid_operand_err(line_no, line))
+    }
+
+    fn ensure_no_extra_operand(
+        line_no: usize,
+        line: &str,
+        parts: &mut SplitWhitespace<'_>,
+    ) -> Result<(), Ir1Error> {
+        if parts.next().is_some() {
+            return Err(Self::invalid_operand_err(line_no, line));
+        }
+        Ok(())
+    }
+
+    fn invalid_instruction_err(line_no: usize, line: &str) -> Ir1Error {
+        Ir1Error::ParseInvalidInstruction {
+            line: line_no,
+            content: line.to_string(),
+        }
+    }
+
+    fn invalid_operand_err(line_no: usize, line: &str) -> Ir1Error {
+        Ir1Error::ParseInvalidOperand {
+            line: line_no,
+            content: line.to_string(),
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::{List, Nil, ParseError, Token};
+use crate::{List, LogLevel, Logger, Nil, ParseError, Token};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum AstNode {
@@ -14,34 +14,91 @@ pub struct Parser {}
 
 impl Parser {
     pub fn parse(tkstream: &[Token]) -> Result<Ast, ParseError> {
+        Self::parse_with_logger(tkstream, None)
+    }
+
+    pub fn parse_with_logger(tkstream: &[Token], logger: Option<&Logger>) -> Result<Ast, ParseError> {
+        if let Some(logger) = logger {
+            logger.emit_raw(
+                LogLevel::Info,
+                "PARSER",
+                "I_PARSE_START",
+                &format!("tokens={}", tkstream.len()),
+            );
+        }
+
         let mut pos = 0usize;
-        let ast = Self::parse_block(&mut pos, tkstream)?;
+        let ast = match Self::parse_block(&mut pos, tkstream, logger) {
+            Ok(ast) => ast,
+            Err(err) => {
+                if let Some(logger) = logger {
+                    logger.emit_error(&err);
+                }
+                return Err(err);
+            }
+        };
 
         if pos < tkstream.len() {
-            return Err(ParseError::UnexpectedRightBracket { pos });
+            let err = ParseError::UnexpectedRightBracket { pos };
+            if let Some(logger) = logger {
+                logger.emit_error(&err);
+            }
+            return Err(err);
+        }
+
+        if let Some(logger) = logger {
+            logger.emit_raw(
+                LogLevel::Debug,
+                "PARSER",
+                "D_PARSE_DONE",
+                &format!("consumed_tokens={}", pos),
+            );
         }
 
         Ok(ast)
     }
 
-    fn parse_block(pos: &mut usize, tokens: &[Token]) -> Result<Ast, ParseError> {
+    fn parse_block(
+        pos: &mut usize,
+        tokens: &[Token],
+        logger: Option<&Logger>,
+    ) -> Result<Ast, ParseError> {
         let mut accer = Rc::new(Nil);
 
         while *pos < tokens.len() {
             match tokens[*pos] {
                 Token::JMPIN => {
+                    let left_bracket_pos = *pos;
+                    if let Some(logger) = logger {
+                        logger.emit_raw(
+                            LogLevel::Verbose,
+                            "PARSER",
+                            "V_PARSE_LOOP_BEGIN",
+                            &format!("token_pos={}", *pos),
+                        );
+                    }
                     *pos += 1;
 
-                    let inner_list = Self::parse_block(pos, tokens)?;
+                    let inner_list = Self::parse_block(pos, tokens, logger)?;
 
                     if *pos >= tokens.len() || tokens[*pos] != Token::JMPOUT {
-                        return Err(ParseError::UnclosedLeftBracket);
+                        return Err(ParseError::UnclosedLeftBracket {
+                            pos: left_bracket_pos,
+                        });
                     }
                     *pos += 1;
 
                     accer = Rc::new(List::Cons(AstNode::Loop(Rc::new(inner_list)), accer));
                 }
                 Token::JMPOUT => {
+                    if let Some(logger) = logger {
+                        logger.emit_raw(
+                            LogLevel::Verbose,
+                            "PARSER",
+                            "V_PARSE_LOOP_END",
+                            &format!("token_pos={}", *pos),
+                        );
+                    }
                     break;
                 }
                 _ => {
@@ -57,6 +114,14 @@ impl Parser {
                     }
 
                     if !run_tokens.is_empty() {
+                        if let Some(logger) = logger {
+                            logger.emit_raw(
+                                LogLevel::Debug,
+                                "PARSER",
+                                "D_PARSE_RUN_SEGMENT",
+                                &format!("segment_len={} ends_at={}", run_tokens.len(), *pos),
+                            );
+                        }
                         accer = Rc::new(List::Cons(AstNode::Run(run_tokens), accer));
                     }
                 }

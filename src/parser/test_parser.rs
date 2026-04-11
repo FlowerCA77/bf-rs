@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Lexer, List, ParseError, Token};
+use crate::{Lexer, List, LogLevel, Logger, ParseError, Token};
 use std::rc::Rc;
 
 fn list_of(nodes: Vec<AstNode>) -> Ast {
@@ -56,7 +56,10 @@ fn parse_rejects_unclosed_left_bracket() {
     let code = String::from("[+");
     let tokens = Lexer::run(&code);
     let result = Parser::parse(&tokens);
-    assert!(matches!(result, Err(ParseError::UnclosedLeftBracket)));
+    assert!(matches!(
+        result,
+        Err(ParseError::UnclosedLeftBracket { .. })
+    ));
 }
 
 #[test]
@@ -68,4 +71,13 @@ fn parse_rejects_unexpected_right_bracket() {
         result,
         Err(ParseError::UnexpectedRightBracket { .. })
     ));
+}
+
+#[test]
+fn parse_with_logger_keeps_ast_shape() {
+    let logger = Logger::new(LogLevel::Debug);
+    let tokens = Lexer::run_with_logger("[]", Some(&logger));
+    let ast = Parser::parse_with_logger(&tokens, Some(&logger)).unwrap();
+    let expected = list_of(vec![AstNode::Loop(Rc::new(List::Nil))]);
+    assert_eq!(ast, expected);
 }

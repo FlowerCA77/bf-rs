@@ -1,7 +1,8 @@
 use std::fs;
 use std::path::Path;
+use std::str::SplitWhitespace;
 
-use crate::{Ir1Block, Ir1Inst, Ir1Program, Ir2Error};
+use crate::{Ir1Block, Ir1Inst, Ir1Program, Ir2Error, LogLevel, Logger};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ir2Inst {
@@ -109,10 +110,19 @@ impl Builder {
     }
 }
 
-fn emit_loop(builder: &mut Builder, inner: &Ir1Block) -> Result<(), Ir2Error> {
+fn emit_loop(builder: &mut Builder, inner: &Ir1Block, logger: Option<&Logger>) -> Result<(), Ir2Error> {
     let head = builder.new_block();
     let body = builder.new_block();
     let exit = builder.new_block();
+
+    if let Some(logger) = logger {
+        logger.emit_raw(
+            LogLevel::Verbose,
+            "IR2",
+            "V_IR2_EMIT_LOOP",
+            &format!("head={} body={} exit={}", head, body, exit),
+        );
+    }
 
     // 1) current -> head
     if !builder.current_has_term()? {
@@ -125,7 +135,7 @@ fn emit_loop(builder: &mut Builder, inner: &Ir1Block) -> Result<(), Ir2Error> {
 
     // 3) body -> inner -> jump head
     builder.set_current(body)?;
-    emit_ir1_block(builder, inner)?;
+    emit_ir1_block(builder, inner, logger)?;
     if !builder.current_has_term()? {
         builder.set_term(Ir2Terminator::Jump(head))?;
     }
@@ -135,8 +145,20 @@ fn emit_loop(builder: &mut Builder, inner: &Ir1Block) -> Result<(), Ir2Error> {
     Ok(())
 }
 
-fn emit_ir1_block(builder: &mut Builder, ir1_block: &Ir1Block) -> Result<(), Ir2Error> {
+fn emit_ir1_block(
+    builder: &mut Builder,
+    ir1_block: &Ir1Block,
+    logger: Option<&Logger>,
+) -> Result<(), Ir2Error> {
     for inst in ir1_block {
+        if let Some(logger) = logger {
+            logger.emit_raw(
+                LogLevel::Debug,
+                "IR2",
+                "D_IR2_LOWER_INST",
+                &format!("inst={:?}", inst),
+            );
+        }
         match inst {
             Ir1Inst::PtrMove(v) => {
                 builder.push_inst(Ir2Inst::AddPtrImm(*v))?;
@@ -151,19 +173,23 @@ fn emit_ir1_block(builder: &mut Builder, ir1_block: &Ir1Block) -> Result<(), Ir2
                 builder.push_inst(Ir2Inst::WriteCellLow8)?;
             }
             Ir1Inst::Loop(inner) => {
-                emit_loop(builder, inner)?;
+                emit_loop(builder, inner, logger)?;
             }
         }
     }
     Ok(())
 }
 
-fn lower_ir1_function(name: &str, root_block: &Ir1Block) -> Result<Ir2Function, Ir2Error> {
+fn lower_ir1_function(
+    name: &str,
+    root_block: &Ir1Block,
+    logger: Option<&Logger>,
+) -> Result<Ir2Function, Ir2Error> {
     let mut builder = Builder::new();
     let entry = builder.new_block();
     builder.set_current(entry)?;
 
-    emit_ir1_block(&mut builder, root_block)?;
+    emit_ir1_block(&mut builder, root_block, logger)?;
 
     if !builder.current_has_term()? {
         builder.set_term(Ir2Terminator::Return)?;
@@ -178,7 +204,41 @@ fn lower_ir1_function(name: &str, root_block: &Ir1Block) -> Result<Ir2Function, 
 
 impl Ir2Program {
     pub fn lower(ir1_prog: &Ir1Program) -> Result<Ir2Program, Ir2Error> {
-        let func = lower_ir1_function("entry", &ir1_prog.root)?;
+        Self::lower_with_logger(ir1_prog, None)
+    }
+
+    pub fn lower_with_logger(
+        ir1_prog: &Ir1Program,
+        logger: Option<&Logger>,
+    ) -> Result<Ir2Program, Ir2Error> {
+        if let Some(logger) = logger {
+            logger.emit_raw(
+                LogLevel::Info,
+                "IR2",
+                "I_IR2_LOWER_START",
+                &format!("ir1_root_insts={}", ir1_prog.root.len()),
+            );
+        }
+
+        let func = match lower_ir1_function("entry", &ir1_prog.root, logger) {
+            Ok(func) => func,
+            Err(err) => {
+                if let Some(logger) = logger {
+                    logger.emit_error(&err);
+                }
+                return Err(err);
+            }
+        };
+
+        if let Some(logger) = logger {
+            logger.emit_raw(
+                LogLevel::Info,
+                "IR2",
+                "I_IR2_LOWER_DONE",
+                &format!("functions=1 blocks={}", func.blocks.len()),
+            );
+        }
+
         Ok(Ir2Program {
             functions: vec![func],
         })
@@ -347,168 +407,172 @@ impl Ir2Program {
     }
 
     fn parse_func_header(line: usize, content: &str) -> Result<(String, BlockId), Ir2Error> {
-        let parts: Vec<&str> = content.split_whitespace().collect();
-        if parts.len() != 4 || parts[0] != "FUNC" || parts[2] != "ENTRY" {
-            return Err(Ir2Error::ParseInvalidFunctionHeader {
-                line,
-                content: content.to_string(),
-            });
+        let mut parts = content.split_whitespace();
+        if parts.next() != Some("FUNC") {
+            return Err(Self::invalid_func_header_err(line, content));
         }
 
-        let entry = parts[3]
-            .parse::<usize>()
-            .map_err(|_| Ir2Error::ParseInvalidOperand {
-                line,
-                content: content.to_string(),
-            })?;
+        let func_name = parts
+            .next()
+            .ok_or_else(|| Self::invalid_func_header_err(line, content))?;
 
-        Ok((parts[1].to_string(), entry))
+        if parts.next() != Some("ENTRY") {
+            return Err(Self::invalid_func_header_err(line, content));
+        }
+
+        let entry_text = parts
+            .next()
+            .ok_or_else(|| Self::invalid_func_header_err(line, content))?;
+
+        if parts.next().is_some() {
+            return Err(Self::invalid_func_header_err(line, content));
+        }
+
+        let entry = entry_text
+            .parse::<usize>()
+            .map_err(|_| Self::invalid_operand_err(line, content))?;
+
+        Ok((func_name.to_string(), entry))
     }
 
     fn parse_block_header(line: usize, content: &str) -> Result<BlockId, Ir2Error> {
-        let parts: Vec<&str> = content.split_whitespace().collect();
-        if parts.len() != 2 || parts[0] != "BLOCK" {
-            return Err(Ir2Error::ParseInvalidBlockHeader {
-                line,
-                content: content.to_string(),
-            });
+        let mut parts = content.split_whitespace();
+        if parts.next() != Some("BLOCK") {
+            return Err(Self::invalid_block_header_err(line, content));
         }
 
-        parts[1]
+        let block_text = parts
+            .next()
+            .ok_or_else(|| Self::invalid_block_header_err(line, content))?;
+
+        if parts.next().is_some() {
+            return Err(Self::invalid_block_header_err(line, content));
+        }
+
+        block_text
             .parse::<usize>()
-            .map_err(|_| Ir2Error::ParseInvalidOperand {
-                line,
-                content: content.to_string(),
-            })
+            .map_err(|_| Self::invalid_operand_err(line, content))
     }
 
     fn parse_inst(line: usize, content: &str) -> Result<Ir2Inst, Ir2Error> {
-        let parts: Vec<&str> = content.split_whitespace().collect();
-        if parts.is_empty() {
-            return Err(Ir2Error::ParseInvalidInstruction {
-                line,
-                content: content.to_string(),
-            });
-        }
+        let mut parts = content.split_whitespace();
+        let op = parts
+            .next()
+            .ok_or_else(|| Self::invalid_instruction_err(line, content))?;
 
-        match parts[0] {
+        match op {
             "PTR" => {
-                if parts.len() != 2 {
-                    return Err(Ir2Error::ParseInvalidOperand {
-                        line,
-                        content: content.to_string(),
-                    });
-                }
-                let val = parts[1]
-                    .parse::<i64>()
-                    .map_err(|_| Ir2Error::ParseInvalidOperand {
-                        line,
-                        content: content.to_string(),
-                    })?;
+                let val = Self::parse_next_i64(line, content, &mut parts)?;
+                Self::ensure_no_extra_operand(line, content, &mut parts)?;
                 Ok(Ir2Inst::AddPtrImm(val))
             }
             "CELL" => {
-                if parts.len() != 2 {
-                    return Err(Ir2Error::ParseInvalidOperand {
-                        line,
-                        content: content.to_string(),
-                    });
-                }
-                let val = parts[1]
-                    .parse::<i64>()
-                    .map_err(|_| Ir2Error::ParseInvalidOperand {
-                        line,
-                        content: content.to_string(),
-                    })?;
+                let val = Self::parse_next_i64(line, content, &mut parts)?;
+                Self::ensure_no_extra_operand(line, content, &mut parts)?;
                 Ok(Ir2Inst::AddCellImm(val))
             }
             "IN" => {
-                if parts.len() != 1 {
-                    return Err(Ir2Error::ParseInvalidOperand {
-                        line,
-                        content: content.to_string(),
-                    });
-                }
+                Self::ensure_no_extra_operand(line, content, &mut parts)?;
                 Ok(Ir2Inst::ReadByteToCell)
             }
             "OUT" => {
-                if parts.len() != 1 {
-                    return Err(Ir2Error::ParseInvalidOperand {
-                        line,
-                        content: content.to_string(),
-                    });
-                }
+                Self::ensure_no_extra_operand(line, content, &mut parts)?;
                 Ok(Ir2Inst::WriteCellLow8)
             }
-            _ => Err(Ir2Error::ParseInvalidInstruction {
-                line,
-                content: content.to_string(),
-            }),
+            _ => Err(Self::invalid_instruction_err(line, content)),
         }
     }
 
     fn parse_term(line: usize, content: &str) -> Result<Ir2Terminator, Ir2Error> {
-        let parts: Vec<&str> = content.split_whitespace().collect();
-        if parts.is_empty() {
-            return Err(Ir2Error::ParseInvalidInstruction {
-                line,
-                content: content.to_string(),
-            });
-        }
+        let full_content = format!("TERM {}", content);
+        let mut parts = content.split_whitespace();
+        let op = parts
+            .next()
+            .ok_or_else(|| Self::invalid_instruction_err(line, &full_content))?;
 
-        match parts[0] {
+        match op {
             "RETURN" => {
-                if parts.len() != 1 {
-                    return Err(Ir2Error::ParseInvalidOperand {
-                        line,
-                        content: format!("TERM {}", content),
-                    });
-                }
+                Self::ensure_no_extra_operand(line, &full_content, &mut parts)?;
                 Ok(Ir2Terminator::Return)
             }
             "JUMP" => {
-                if parts.len() != 2 {
-                    return Err(Ir2Error::ParseInvalidOperand {
-                        line,
-                        content: format!("TERM {}", content),
-                    });
-                }
-                let target =
-                    parts[1]
-                        .parse::<usize>()
-                        .map_err(|_| Ir2Error::ParseInvalidOperand {
-                            line,
-                            content: format!("TERM {}", content),
-                        })?;
+                let target = Self::parse_next_usize(line, &full_content, &mut parts)?;
+                Self::ensure_no_extra_operand(line, &full_content, &mut parts)?;
                 Ok(Ir2Terminator::Jump(target))
             }
             "BRANCH_ZERO" => {
-                if parts.len() != 3 {
-                    return Err(Ir2Error::ParseInvalidOperand {
-                        line,
-                        content: format!("TERM {}", content),
-                    });
-                }
-                let zero =
-                    parts[1]
-                        .parse::<usize>()
-                        .map_err(|_| Ir2Error::ParseInvalidOperand {
-                            line,
-                            content: format!("TERM {}", content),
-                        })?;
-                let nonzero =
-                    parts[2]
-                        .parse::<usize>()
-                        .map_err(|_| Ir2Error::ParseInvalidOperand {
-                            line,
-                            content: format!("TERM {}", content),
-                        })?;
+                let zero = Self::parse_next_usize(line, &full_content, &mut parts)?;
+                let nonzero = Self::parse_next_usize(line, &full_content, &mut parts)?;
+                Self::ensure_no_extra_operand(line, &full_content, &mut parts)?;
                 Ok(Ir2Terminator::BranchCellZero(zero, nonzero))
             }
             _ => Err(Ir2Error::ParseInvalidInstruction {
                 line,
-                content: format!("TERM {}", content),
+                content: full_content,
             }),
+        }
+    }
+
+    fn parse_next_i64(
+        line: usize,
+        content: &str,
+        parts: &mut SplitWhitespace<'_>,
+    ) -> Result<i64, Ir2Error> {
+        let raw = parts
+            .next()
+            .ok_or_else(|| Self::invalid_operand_err(line, content))?;
+        raw.parse::<i64>()
+            .map_err(|_| Self::invalid_operand_err(line, content))
+    }
+
+    fn parse_next_usize(
+        line: usize,
+        content: &str,
+        parts: &mut SplitWhitespace<'_>,
+    ) -> Result<usize, Ir2Error> {
+        let raw = parts
+            .next()
+            .ok_or_else(|| Self::invalid_operand_err(line, content))?;
+        raw.parse::<usize>()
+            .map_err(|_| Self::invalid_operand_err(line, content))
+    }
+
+    fn ensure_no_extra_operand(
+        line: usize,
+        content: &str,
+        parts: &mut SplitWhitespace<'_>,
+    ) -> Result<(), Ir2Error> {
+        if parts.next().is_some() {
+            return Err(Self::invalid_operand_err(line, content));
+        }
+        Ok(())
+    }
+
+    fn invalid_func_header_err(line: usize, content: &str) -> Ir2Error {
+        Ir2Error::ParseInvalidFunctionHeader {
+            line,
+            content: content.to_string(),
+        }
+    }
+
+    fn invalid_block_header_err(line: usize, content: &str) -> Ir2Error {
+        Ir2Error::ParseInvalidBlockHeader {
+            line,
+            content: content.to_string(),
+        }
+    }
+
+    fn invalid_instruction_err(line: usize, content: &str) -> Ir2Error {
+        Ir2Error::ParseInvalidInstruction {
+            line,
+            content: content.to_string(),
+        }
+    }
+
+    fn invalid_operand_err(line: usize, content: &str) -> Ir2Error {
+        Ir2Error::ParseInvalidOperand {
+            line,
+            content: content.to_string(),
         }
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Ir1Program, Lexer, Parser};
+use crate::{Ir1Program, Lexer, LogLevel, Logger, Parser};
 
 fn lower_ir2_from_code(code: &str) -> Ir2Program {
     let tokens = Lexer::run(&code.to_string());
@@ -81,4 +81,41 @@ fn bf2_roundtrip_raw_string() {
     let text = ir2.to_bf2_string();
     let reparsed = Ir2Program::from_bf2_str(&text).unwrap();
     assert_eq!(reparsed, ir2);
+}
+
+#[test]
+fn lower_with_logger_keeps_cfg_shape() {
+    let logger = Logger::new(LogLevel::Debug);
+    let tokens = Lexer::run_with_logger("[-]", Some(&logger));
+    let ast = Parser::parse_with_logger(&tokens, Some(&logger)).unwrap();
+    let ir1 = Ir1Program::lower_with_logger(&ast, Some(&logger)).unwrap();
+    let ir2 = Ir2Program::lower_with_logger(&ir1, Some(&logger)).unwrap();
+
+    assert_eq!(ir2.functions.len(), 1);
+    assert_eq!(ir2.functions[0].blocks.len(), 4);
+}
+
+#[test]
+fn bf2_parse_rejects_invalid_function_header_shape() {
+    let raw = r#"
+BF2
+FUNC entry 0
+"#;
+
+    let err = Ir2Program::from_bf2_str(raw).unwrap_err();
+    assert!(matches!(err, Ir2Error::ParseInvalidFunctionHeader { .. }));
+}
+
+#[test]
+fn bf2_parse_rejects_term_with_missing_operand() {
+    let raw = r#"
+BF2
+FUNC entry ENTRY 0
+BLOCK 0
+  TERM JUMP
+END_FUNC
+"#;
+
+    let err = Ir2Program::from_bf2_str(raw).unwrap_err();
+    assert!(matches!(err, Ir2Error::ParseInvalidOperand { .. }));
 }

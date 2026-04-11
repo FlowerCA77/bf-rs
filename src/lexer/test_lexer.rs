@@ -1,4 +1,5 @@
 use super::*;
+use crate::{LogLevel, Logger};
 
 #[test]
 fn run_maps_brainfxxk_tokens_and_filters_comments() {
@@ -43,4 +44,11 @@ fn run_keeps_brackets_in_order() {
             Token::JMPOUT,
         ]
     );
+}
+
+#[test]
+fn run_with_logger_keeps_tokenization_result() {
+    let logger = Logger::new(LogLevel::Debug);
+    let tokens = Lexer::run_with_logger("a+[]", Some(&logger));
+    assert_eq!(tokens, vec![Token::INC, Token::JMPIN, Token::JMPOUT]);
 }
